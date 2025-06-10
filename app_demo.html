@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>People Counter Full Demo</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 0; padding: 20px; background-color: #f4f4f4; color: #333; }
+        .container { max-width: 1200px; margin: auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+        h1, h2 { color: #333; text-align: center; }
+        .section { margin-bottom: 30px; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .section h2 { text-align: left; margin-top: 0; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+        #videoFeed { display: block; margin: 10px auto; border: 1px solid black; max-width: 100%; height: auto; background-color: #222; }
+        
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; }
+        .stat-item { background-color: #e9ecef; padding: 15px; border-radius: 4px; text-align: center; }
+        .stat-item strong { display: block; font-size: 1.2em; margin-bottom: 5px; }
+        .stat-item span { font-size: 1.5em; color: #007bff; }
+
+        #eventLog { border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: auto; background-color: #f9f9f9; margin-top: 10px; }
+        .event-entry { border-bottom: 1px solid #eee; padding: 8px 5px; font-size: 0.9em; }
+        .event-entry:last-child { border-bottom: none; }
+        .event-entry .timestamp { color: #666; font-weight: bold; margin-right: 5px; }
+        .event-entry .status-started { color: green; }
+        .event-entry .status-ended { color: orange; }
+
+        .controls { margin-bottom: 15px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+        .controls label { margin-right: 5px; }
+        .controls input[type="number"], .controls input[type="text"] { padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        .controls button { padding: 8px 15px; background-color: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; }
+        .controls button:hover { background-color: #0056b3; }
+        .controls button:disabled { background-color: #ccc; cursor: not-allowed; }
+
+        #faceImageDisplay { text-align: center; }
+        #faceImage { max-width: 200px; max-height: 200px; border: 1px solid #ccc; display: block; margin: 10px auto; background-color: #eee;}
+        #allFacesContainer { display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid #eee; padding: 10px; max-height: 400px; overflow-y: auto; margin-top: 10px;}
+        .face-item { border: 1px solid #ddd; padding: 5px; text-align: center; background-color: #f9f9f9; border-radius: 4px;}
+        .face-item img { max-width: 100px; max-height: 100px; display: block; margin-bottom: 5px;}
+        .face-item p { font-size: 0.8em; margin: 0; word-break: break-all; }
+
+        #wsStatus { text-align: center; padding: 10px; background-color: #6c757d; color: white; border-radius: 4px; margin-top: 20px;}
+        .status-message { font-size: 0.9em; margin-top: 5px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>People Counter Dashboard</h1>
+        <div id="wsStatus">Connecting to WebSocket...</div>
+
+        <!-- Video Stream Section -->
+        <div class="section">
+            <h2>Live Video Stream</h2>
+            <img id="videoFeed" src="" alt="Video Feed">
+            <div id="frameTimestamp" class="status-message">Frame Timestamp: N/A</div>
+        </div>
+
+        <!-- Statistics Section -->
+        <div class="section">
+            <h2>Live Statistics</h2>
+            <div class="stats-grid">
+                <div class="stat-item"><strong>Count IN</strong><span id="countIn">N/A</span></div>
+                <div class="stat-item"><strong>Count OUT</strong><span id="countOut">N/A</span></div>
+                <div class="stat-item"><strong>Detected Faces</strong><span id="faceCount">N/A</span></div>
+                <div class="stat-item"><strong>Daily Events</strong><span id="dailyEventCount">N/A</span></div>
+                <div class="stat-item"><strong>Event Active</strong><span id="eventActive">N/A</span></div>
+                <div class="stat-item"><strong>Current Event IN</strong><span id="currentEventCountIn">N/A</span></div>
+            </div>
+            <div id="statsTimestamp" class="status-message" style="text-align: right; margin-top:10px;">Stats Timestamp: N/A</div>
+        </div>
+
+        <!-- Event Log Section -->
+        <div class="section">
+            <h2>Event Log</h2>
+            <div id="eventLog"></div>
+        </div>
+
+        <!-- Face Image Retrieval Section -->
+        <div class="section">
+            <h2>Face Image Retrieval</h2>
+            <div class="controls">
+                <label for="faceIdInput">Face ID:</label>
+                <input type="number" id="faceIdInput" value="1" min="0">
+                <button id="getFaceButton" disabled>Get Single Face</button>
+            </div>
+            <div id="faceImageDisplay">
+                <img id="faceImage" src="" alt="Requested Face">
+                <div id="faceFilename" class="status-message">Filename: N/A</div>
+                <div id="faceStatus" class="status-message">Enter an ID and click "Get Single Face".</div>
+            </div>
+            
+            <hr style="margin: 20px 0;">
+
+            <div class="controls">
+                <label for="limitInput">Recent Faces Limit:</label>
+                <input type="number" id="limitInput" value="10" min="1" max="100">
+                <button id="getAllFacesButton" disabled>Get Recent Faces</button>
+            </div>
+            <div id="allFacesContainer"></div>
+            <div id="allFacesStatus" class="status-message">Click "Get Recent Faces".</div>
+        </div>
+    </div>
+
+    <script>
+        const wsUrl = `ws://${window.location.hostname || '10.11.24.34'}:8765`; // Dynamically use hostname or default to localhost
+        let ws;
+
+        // DOM Elements
+        const wsStatusDiv = document.getElementById('wsStatus');
+        const videoFeedImg = document.getElementById('videoFeed');
+        const frameTimestampDiv = document.getElementById('frameTimestamp');
+        
+        const countInEl = document.getElementById('countIn');
+        const countOutEl = document.getElementById('countOut');
+        const faceCountEl = document.getElementById('faceCount');
+        const dailyEventCountEl = document.getElementById('dailyEventCount');
+        const eventActiveEl = document.getElementById('eventActive');
+        const currentEventCountInEl = document.getElementById('currentEventCountIn');
+        const statsTimestampDiv = document.getElementById('statsTimestamp');
+
+        const eventLogEl = document.getElementById('eventLog');
+
+        const faceIdInput = document.getElementById('faceIdInput');
+        const getFaceButton = document.getElementById('getFaceButton');
+        const faceImageEl = document.getElementById('faceImage');
+        const faceFilenameEl = document.getElementById('faceFilename');
+        const faceStatusDiv = document.getElementById('faceStatus');
+        const limitInput = document.getElementById('limitInput');
+        const getAllFacesButton = document.getElementById('getAllFacesButton');
+        const allFacesContainer = document.getElementById('allFacesContainer');
+        const allFacesStatusDiv = document.getElementById('allFacesStatus');
+
+        function connectWebSocket() {
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                wsStatusDiv.textContent = 'WebSocket Connected';
+                wsStatusDiv.style.backgroundColor = '#28a745';
+                console.log('WebSocket connection established');
+                getFaceButton.disabled = false;
+                getAllFacesButton.disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    // console.log("WS Received:", message);
+
+                    switch (message.type) {
+                        case 'frame':
+                            if (message.data) {
+                                videoFeedImg.src = 'data:image/jpeg;base64,' + message.data;
+                                frameTimestampDiv.textContent = `Frame Timestamp: ${message.timestamp}`;
+                            }
+                            break;
+                        case 'stats':
+                            if (message.data) {
+                                const stats = message.data;
+                                countInEl.textContent = stats.count_in;
+                                countOutEl.textContent = stats.count_out;
+                                faceCountEl.textContent = stats.face_count;
+                                dailyEventCountEl.textContent = stats.daily_event_count;
+                                eventActiveEl.textContent = stats.event_active ? 'Yes' : 'No';
+                                eventActiveEl.style.color = stats.event_active ? 'green' : 'red';
+                                currentEventCountInEl.textContent = stats.current_event_count_in;
+                                statsTimestampDiv.textContent = `Stats Timestamp: ${message.timestamp}`;
+                            }
+                            break;
+                        case 'event':
+                            if (message.data) {
+                                addEventToLog(message.data, message.timestamp);
+                            }
+                            break;
+                        case 'face_image':
+                            if (message.error) {
+                                faceStatusDiv.textContent = `Error for Face ID ${message.face_id}: ${message.error}`;
+                                faceImageEl.src = "";
+                                faceFilenameEl.textContent = "Filename: N/A";
+                            } else if (message.image_data) {
+                                faceImageEl.src = 'data:image/jpeg;base64,' + message.image_data;
+                                faceFilenameEl.textContent = `Filename: ${message.filename || 'N/A'}`;
+                                faceStatusDiv.textContent = `Displaying Face ID: ${message.face_id}`;
+                            }
+                            break;
+                        case 'all_faces':
+                            allFacesContainer.innerHTML = ''; // Clear previous
+                            if (message.error) {
+                                allFacesStatusDiv.textContent = `Error: ${message.error}`;
+                            } else if (message.faces && message.faces.length > 0) {
+                                message.faces.forEach(face => {
+                                    const itemDiv = document.createElement('div');
+                                    itemDiv.classList.add('face-item');
+                                    
+                                    const img = document.createElement('img');
+                                    img.src = 'data:image/jpeg;base64,' + face.image_data;
+                                    img.alt = `Face ID ${face.face_id}`;
+                                    
+                                    const p = document.createElement('p');
+                                    // Truncate filename for display if too long
+                                    const displayName = face.filename.length > 25 ? face.filename.substring(0,12) + '...' + face.filename.substring(face.filename.length - 10) : face.filename;
+                                    p.textContent = `ID: ${face.face_id} (${displayName})`;
+                                    
+                                    itemDiv.appendChild(img);
+                                    itemDiv.appendChild(p);
+                                    allFacesContainer.appendChild(itemDiv);
+                                });
+                                allFacesStatusDiv.textContent = `Displayed ${message.faces.length} recent faces.`;
+                            } else {
+                                allFacesStatusDiv.textContent = 'No recent faces found or returned.';
+                            }
+                            break;
+                        default:
+                            console.warn("Received unknown message type:", message.type);
+                    }
+                } catch (e) {
+                    console.error('Error processing message or invalid JSON:', e, event.data);
+                    wsStatusDiv.textContent = 'Error processing WebSocket message. Check console.';
+                    wsStatusDiv.style.backgroundColor = '#dc3545';
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                wsStatusDiv.textContent = 'WebSocket Error. Check console. Retrying...';
+                wsStatusDiv.style.backgroundColor = '#dc3545';
+                disableControls();
+            };
+
+            ws.onclose = (event) => {
+                wsStatusDiv.textContent = `WebSocket Closed: ${event.reason || 'Connection lost'}. Attempting to reconnect in 3 seconds...`;
+                wsStatusDiv.style.backgroundColor = '#ffc107';
+                console.log('WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
+                videoFeedImg.src = ""; // Clear image
+                disableControls();
+                setTimeout(connectWebSocket, 3000); // Attempt to reconnect
+            };
+        }
+
+        function disableControls() {
+            getFaceButton.disabled = true;
+            getAllFacesButton.disabled = true;
+        }
+
+        function addEventToLog(data, timestamp) {
+            const entry = document.createElement('div');
+            entry.classList.add('event-entry');
+            
+            const timeSpan = document.createElement('span');
+            timeSpan.classList.add('timestamp');
+            timeSpan.textContent = `[${timestamp}]`;
+            
+            const messageSpan = document.createElement('span');
+            let content = `Event ${data.status}`;
+            if (data.status === 'started') {
+                messageSpan.classList.add('status-started');
+                content += `: Started at ${data.start_time}.`;
+            } else if (data.status === 'ended') {
+                messageSpan.classList.add('status-ended');
+                content += `: Ended at ${data.end_time}. (Start: ${data.start_time}, Count IN: ${data.count_in})`;
+            } else {
+                content += JSON.stringify(data); // Fallback for other statuses
+            }
+            messageSpan.textContent = content;
+
+            entry.appendChild(timeSpan);
+            entry.appendChild(messageSpan);
+            eventLogEl.insertBefore(entry, eventLogEl.firstChild); // Add to top
+             // Limit log entries
+            if (eventLogEl.children.length > 100) {
+                eventLogEl.removeChild(eventLogEl.lastChild);
+            }
+        }
+
+        // Event Listeners for Face Retrieval
+        getFaceButton.onclick = () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const faceId = parseInt(faceIdInput.value);
+                if (isNaN(faceId) || faceId < 0) {
+                    faceStatusDiv.textContent = "Please enter a valid non-negative number for Face ID.";
+                    return;
+                }
+                ws.send(JSON.stringify({ type: 'get_face', face_id: faceId }));
+                faceStatusDiv.textContent = `Requesting Face ID: ${faceId}...`;
+                faceImageEl.src = "";
+                faceFilenameEl.textContent = "Filename: N/A";
+            } else {
+                faceStatusDiv.textContent = "WebSocket is not connected.";
+            }
+        };
+
+        getAllFacesButton.onclick = () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const limit = parseInt(limitInput.value);
+                 if (isNaN(limit) || limit < 1) {
+                    allFacesStatusDiv.textContent = "Please enter a valid limit (>=1).";
+                    return;
+                }
+                ws.send(JSON.stringify({ type: 'get_all_faces', limit: limit }));
+                allFacesStatusDiv.textContent = `Requesting ${limit} recent faces...`;
+                allFacesContainer.innerHTML = '';
+            } else {
+                allFacesStatusDiv.textContent = "WebSocket is not connected.";
+            }
+        };
+
+        // Initial connection attempt
+        connectWebSocket();
+    </script>
+</body>
+</html>

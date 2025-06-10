@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Faces Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        .controls, .face-display, .all-faces-display { margin-bottom: 20px; }
+        #faceImage { max-width: 200px; max-height: 200px; border: 1px solid #ccc; display: block; margin-top: 10px;}
+        #allFacesContainer { display: flex; flex-wrap: wrap; gap: 10px; border: 1px solid #eee; padding: 10px; max-height: 500px; overflow-y: auto;}
+        .face-item { border: 1px solid #ddd; padding: 5px; text-align: center;}
+        .face-item img { max-width: 100px; max-height: 100px; display: block; }
+        .face-item p { font-size: 0.8em; margin: 5px 0 0 0; }
+        #status, #faceStatus, #allFacesStatus { margin-top: 10px; color: grey; }
+    </style>
+</head>
+<body>
+    <h1>Face Image Retrieval</h1>
+
+    <div class="controls">
+        <label for="faceIdInput">Enter Face ID:</label>
+        <input type="number" id="faceIdInput" value="1">
+        <button id="getFaceButton">Get Face</button>
+    </div>
+    <div class="face-display">
+        <h2>Single Face:</h2>
+        <img id="faceImage" src="" alt="Requested Face">
+        <div id="faceFilename"></div>
+        <div id="faceStatus">Enter an ID and click "Get Face".</div>
+    </div>
+
+    <hr>
+
+    <div class="controls">
+        <label for="limitInput">Number of recent faces to show:</label>
+        <input type="number" id="limitInput" value="10" min="1" max="100">
+        <button id="getAllFacesButton">Get All Recent Faces</button>
+    </div>
+    <div class="all-faces-display">
+        <h2>Recent Faces:</h2>
+        <div id="allFacesContainer"></div>
+        <div id="allFacesStatus">Click "Get All Recent Faces".</div>
+    </div>
+    
+    <div id="status">Connecting...</div>
+
+    <script>
+        const faceIdInput = document.getElementById('faceIdInput');
+        const getFaceButton = document.getElementById('getFaceButton');
+        const faceImageEl = document.getElementById('faceImage');
+        const faceFilenameEl = document.getElementById('faceFilename');
+        const faceStatusDiv = document.getElementById('faceStatus');
+
+        const limitInput = document.getElementById('limitInput');
+        const getAllFacesButton = document.getElementById('getAllFacesButton');
+        const allFacesContainer = document.getElementById('allFacesContainer');
+        const allFacesStatusDiv = document.getElementById('allFacesStatus');
+
+        const statusDiv = document.getElementById('status');
+        const wsUrl = 'ws://localhost:8765';
+        let ws;
+
+        function connect() {
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                statusDiv.textContent = 'Connected to WebSocket server.';
+                console.log('WebSocket connection established');
+                getFaceButton.disabled = false;
+                getAllFacesButton.disabled = false;
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    // console.log("Received:", message);
+
+                    if (message.type === 'face_image') {
+                        if (message.error) {
+                            faceStatusDiv.textContent = `Error for Face ID ${message.face_id}: ${message.error}`;
+                            faceImageEl.src = "";
+                            faceFilenameEl.textContent = "";
+                        } else if (message.image_data) {
+                            faceImageEl.src = 'data:image/jpeg;base64,' + message.image_data;
+                            faceFilenameEl.textContent = `Filename: ${message.filename || 'N/A'}`;
+                            faceStatusDiv.textContent = `Displaying Face ID: ${message.face_id}`;
+                        }
+                    } else if (message.type === 'all_faces') {
+                        allFacesContainer.innerHTML = ''; // Clear previous
+                        if (message.error) {
+                            allFacesStatusDiv.textContent = `Error: ${message.error}`;
+                        } else if (message.faces && message.faces.length > 0) {
+                            message.faces.forEach(face => {
+                                const itemDiv = document.createElement('div');
+                                itemDiv.classList.add('face-item');
+                                
+                                const img = document.createElement('img');
+                                img.src = 'data:image/jpeg;base64,' + face.image_data;
+                                img.alt = `Face ID ${face.face_id}`;
+                                
+                                const p = document.createElement('p');
+                                p.textContent = `ID: ${face.face_id} (${face.filename.substring(0,19)}...)`;
+                                
+                                itemDiv.appendChild(img);
+                                itemDiv.appendChild(p);
+                                allFacesContainer.appendChild(itemDiv);
+                            });
+                            allFacesStatusDiv.textContent = `Displayed ${message.faces.length} faces.`;
+                        } else {
+                            allFacesStatusDiv.textContent = 'No faces found or returned.';
+                        }
+                    }
+
+                } catch (e) {
+                    console.error('Error processing message or invalid JSON:', e, event.data);
+                    statusDiv.textContent = 'Error processing WebSocket message.';
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                statusDiv.textContent = 'WebSocket error. Check console.';
+                getFaceButton.disabled = true;
+                getAllFacesButton.disabled = true;
+            };
+
+            ws.onclose = (event) => {
+                statusDiv.textContent = `WebSocket closed: ${event.reason || 'No reason specified'}. Attempting to reconnect in 3 seconds...`;
+                console.log('WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
+                getFaceButton.disabled = true;
+                getAllFacesButton.disabled = true;
+                setTimeout(connect, 3000);
+            };
+        }
+
+        getFaceButton.onclick = () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const faceId = parseInt(faceIdInput.value);
+                if (isNaN(faceId)) {
+                    faceStatusDiv.textContent = "Please enter a valid number for Face ID.";
+                    return;
+                }
+                ws.send(JSON.stringify({ type: 'get_face', face_id: faceId }));
+                faceStatusDiv.textContent = `Requesting Face ID: ${faceId}...`;
+                faceImageEl.src = "";
+                faceFilenameEl.textContent = "";
+            } else {
+                faceStatusDiv.textContent = "WebSocket is not connected.";
+            }
+        };
+
+        getAllFacesButton.onclick = () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                const limit = parseInt(limitInput.value);
+                 if (isNaN(limit) || limit < 1) {
+                    allFacesStatusDiv.textContent = "Please enter a valid limit (>=1).";
+                    return;
+                }
+                ws.send(JSON.stringify({ type: 'get_all_faces', limit: limit }));
+                allFacesStatusDiv.textContent = `Requesting ${limit} recent faces...`;
+                allFacesContainer.innerHTML = '';
+            } else {
+                allFacesStatusDiv.textContent = "WebSocket is not connected.";
+            }
+        };
+        
+        getFaceButton.disabled = true; // Disable until connected
+        getAllFacesButton.disabled = true; // Disable until connected
+        connect();
+    </script>
+</body>
+</html>

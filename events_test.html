@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>WebSocket Event Test</title>
+    <style>
+        body { font-family: sans-serif; padding: 20px; }
+        #eventLog { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; background-color: #f9f9f9; }
+        .event-entry { border-bottom: 1px solid #eee; padding: 5px 0; }
+        .event-entry:last-child { border-bottom: none; }
+        #status { margin-top: 20px; color: grey; }
+    </style>
+</head>
+<body>
+    <h1>Event Log</h1>
+    <div id="eventLog"></div>
+    <div id="status">Connecting...</div>
+
+    <script>
+        const eventLogEl = document.getElementById('eventLog');
+        const statusDiv = document.getElementById('status');
+        const wsUrl = 'ws://localhost:8765';
+        let ws;
+
+        function addEventToLog(data, timestamp) {
+            const entry = document.createElement('div');
+            entry.classList.add('event-entry');
+            let content = `<strong>[${timestamp}] Event ${data.status}:</strong> `;
+            if (data.status === 'started') {
+                content += `Started at ${data.start_time}.`;
+            } else if (data.status === 'ended') {
+                content += `Ended at ${data.end_time}. Start: ${data.start_time}, Count IN: ${data.count_in}.`;
+            } else {
+                content += JSON.stringify(data);
+            }
+            entry.innerHTML = content;
+            eventLogEl.appendChild(entry);
+            eventLogEl.scrollTop = eventLogEl.scrollHeight; // Scroll to bottom
+        }
+        
+        function connect() {
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                statusDiv.textContent = 'Connected to WebSocket server.';
+                console.log('WebSocket connection established');
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    if (message.type === 'event' && message.data) {
+                        addEventToLog(message.data, message.timestamp);
+                    }
+                } catch (e) {
+                    console.error('Error processing message or invalid JSON:', e, event.data);
+                    statusDiv.textContent = 'Error processing event message.';
+                }
+            };
+
+            ws.onerror = (error) => {
+                console.error('WebSocket Error:', error);
+                statusDiv.textContent = 'WebSocket error. Check console.';
+            };
+
+            ws.onclose = (event) => {
+                statusDiv.textContent = `WebSocket closed: ${event.reason || 'No reason specified'}. Attempting to reconnect in 3 seconds...`;
+                console.log('WebSocket connection closed. Code:', event.code, 'Reason:', event.reason);
+                setTimeout(connect, 3000);
+            };
+        }
+        connect();
+    </script>
+</body>
+</html>
