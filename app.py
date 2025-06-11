@@ -27,14 +27,18 @@ class WebSocketServer:
         self.host = host
         self.port = port
         self.connected_clients = set()
-        self.frame_queue = Queue(maxsize=5)  # Limit queue size to prevent memory issues
+        self.frame_queue = Queue(maxsize=5)
         self.stats_queue = Queue(maxsize=10)
-        self.event_queue = Queue(maxsize=10)  # Queue for event data
+        self.event_queue = Queue(maxsize=10)
         self.server = None
         self.is_running = False
-        self.face_images_ref = face_images_ref  # Reference to the main face_images dictionary
+        self.face_images_ref = face_images_ref
 
-    async def handler(self, websocket, path):
+    # =========================================================================
+    # CHANGE #1: The handler method is renamed to the special __call__ method.
+    # This makes the class instance itself a callable "protocol factory".
+    # =========================================================================
+    async def __call__(self, websocket, path=None):
         # Register client
         self.connected_clients.add(websocket)
         try:
@@ -46,9 +50,9 @@ class WebSocketServer:
                     if data.get('type') == 'get_face':
                         face_id = data.get('face_id')
                         if face_id is not None:
-                            await self.send_face_image(websocket, int(face_id))  # Ensure face_id is int
+                            await self.send_face_image(websocket, int(face_id))
                     elif data.get('type') == 'get_all_faces':
-                        limit = data.get('limit', 50)  # Default to the last 50 faces
+                        limit = data.get('limit', 50)
                         await self.send_all_faces(websocket, int(limit))
                 except json.JSONDecodeError:
                     await websocket.send(json.dumps({"error": "Invalid JSON message"}))
@@ -63,6 +67,9 @@ class WebSocketServer:
         finally:
             # Unregister client
             self.connected_clients.remove(websocket)
+
+    # ... (rest of your methods like send_face_image, broadcast_frame, etc. remain unchanged) ...
+    # ... (make sure all other methods from send_face_image to update_stats are still here) ...
 
     async def send_face_image(self, websocket, face_id):
         if self.face_images_ref is None:
@@ -265,24 +272,30 @@ class WebSocketServer:
     async def start_server(self):
         """Start the WebSocket server"""
         self.is_running = True
+        # =========================================================================
+        # CHANGE #2: Pass the instance `self` directly to websockets.serve.
+        # It will now use the `__call__` method we defined for each connection.
+        # =========================================================================
         self.server = await websockets.serve(
-            self.handler, self.host, self.port
+            self, self.host, self.port
         )
         print(f"WebSocket server started at ws://{self.host}:{self.port}")
 
         # Start broadcasting tasks
         asyncio.create_task(self.broadcast_frame())
         asyncio.create_task(self.broadcast_stats())
-        asyncio.create_task(self.broadcast_event())  # Start event broadcasting task
+        asyncio.create_task(self.broadcast_event())
 
         # Keep server running
         await self.server.wait_closed()
 
     def start(self):
         """Start the WebSocket server in a separate thread"""
-
         def run_server():
-            asyncio.run(self.start_server())
+            # Create a new event loop for this thread
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            loop.run_until_complete(self.start_server())
 
         threading.Thread(target=run_server, daemon=True).start()
 
@@ -420,7 +433,6 @@ if __name__ == '__main__':
     model = YOLO(config.MODEL_PATH)
     model.verbose = False
 
-
     # Define a function to establish and reconnect camera
     def connect_camera(rtsp_url, max_retries=5, retry_delay=5):
         for attempt in range(max_retries):
@@ -537,7 +549,7 @@ if __name__ == '__main__':
     signal.signal(signal.SIGTERM, signal_handler)
 
     try:
-        # Start the recorder
+        # Start the recorder if enabled
         if config.RECORDING:
             recorder.start()
 
@@ -546,35 +558,48 @@ if __name__ == '__main__':
         stats_update_interval = 0.5  # Update stats every 0.5 seconds
 
         while True:
-            ret, frame = cap.read()
-
-            if not ret:
-                consecutive_errors += 1
-                print(f"Error reading frame ({consecutive_errors}/{max_consecutive_errors})")
-
-                if consecutive_errors >= max_consecutive_errors:
-                    print("Too many consecutive errors. Reconnecting to camera...")
-                    if cap: cap.release()
-                    cap = connect_camera(config.CAMERA_URL)
-                    if cap is None:
-                        print("Failed to reconnect. Using last good frame if available.")
-                        if last_successful_frame is None:
-                            print("No backup frame available. Exiting.")
-                            break  # Exit loop
-                        frame = last_successful_frame.copy()
-                    else:
-                        consecutive_errors = 0
-                elif last_successful_frame is not None:
-                    # Use the last good frame if available
-                    frame = last_successful_frame.copy()
-                    print("Using last good frame")
-                else:
-                    # If no frame is available, wait and try again
-                    time.sleep(1)
-                    continue  # Skip rest of the loop
+            # --- ROBUST FRAME READING & RECONNECTION LOGIC ---
+            if not (cap and cap.isOpened()):
+                # This handles the case where the cap object itself is invalid or has been released
+                ret = False
             else:
-                consecutive_errors = 0
-                last_successful_frame = frame.copy()
+                # Try to read a frame from the existing camera object
+                ret, frame = cap.read()
+
+            # If reading fails for any reason, enter the reconnection sub-loop
+            if not ret:
+                print("Stream lost or frame could not be read. Attempting to reconnect...")
+
+                # Cleanly release the old camera object if it exists
+                if cap:
+                    cap.release()
+
+                # Enter a dedicated reconnection loop that will block until successful
+                reconnect_delay = 5  # Seconds between reconnection attempts
+                while True:
+                    print(f"Attempting to connect to camera: {config.CAMERA_URL}")
+                    # Use your existing connect_camera function which has its own internal retries
+                    cap = connect_camera(config.CAMERA_URL)
+
+                    if cap is not None and cap.isOpened():
+                        print("Reconnection successful. Resuming stream processing.")
+                        # Invalidate the last good frame to ensure we don't process a stale image
+                        last_successful_frame = None
+                        # Break the inner reconnection loop to resume the main processing loop
+                        break
+                    else:
+                        print(f"Reconnect attempt failed. Retrying in {reconnect_delay} seconds...")
+                        time.sleep(reconnect_delay)
+
+                # After successful reconnection, use 'continue' to skip the rest of this
+                # loop iteration and start fresh with the new camera connection.
+                continue
+
+            # If we reach here, 'ret' was True, so we have a valid frame
+            # Store a copy of the good frame to use as a fallback if needed (though the new logic minimizes this)
+            last_successful_frame = frame.copy()
+
+            # --- ALL NORMAL PROCESSING LOGIC CONTINUES BELOW ---
 
             # Resize frame for processing
             processed_frame = cv2.resize(frame, config.GET_RESOLUTION('960p', config.ASPECT_RATIO))
@@ -589,7 +614,6 @@ if __name__ == '__main__':
                 continue
 
             if results is None or len(results) == 0 or results[0].boxes is None:
-                # print("No results or boxes from YOLO model") # Can be noisy
                 # If no detections, still send frame and update stats
                 annotated_frame = processed_frame.copy()  # Use processed_frame if no detections
             else:
@@ -662,7 +686,6 @@ if __name__ == '__main__':
                                                 except sqlite3.IntegrityError:
                                                     pass
 
-
                         elif int(class_id) == 0:  # class "Face"
                             x1, y1, x2, y2 = box_xyxy_coords
                             cv2.rectangle(annotated_frame, (int(x1), int(y1)), (int(x2), int(y2)), (0, 255, 255), 1)
@@ -681,9 +704,8 @@ if __name__ == '__main__':
                         if current_time_tracks - track_time[track_id_key] > config.TRACK_TIMEOUT:
                             if track_id_key in track_history: del track_history[track_id_key]
                             if track_id_key in track_time: del track_time[track_id_key]
-                            # crossing_status for this track_id_key might also be cleared or handled based on timeout logic if needed
 
-            # Event logic (outside YOLO result processing, uses current_time_tracks or just time.time())
+            # Event logic
             current_time_event_check = time.time()
             if current_time_event_check - last_hour_start_time >= 3600:
                 print(f"Hourly check: {people_in_last_hour} people entered in the last hour.")
@@ -704,7 +726,7 @@ if __name__ == '__main__':
                     if event_active:
                         consecutive_low_hours += 1
                         print(f"Low count for past hour. Consecutive low hours: {consecutive_low_hours}")
-                        if consecutive_low_hours >= 2:  # Use >= 2 (meaning 2 full hours of low activity)
+                        if consecutive_low_hours >= 2:
                             event_active = False
                             event_end_time = datetime.datetime.now()
                             daily_event_count += 1
@@ -730,7 +752,7 @@ if __name__ == '__main__':
                             })
                             current_event_count_in = 0
                             event_start_time = None
-                            consecutive_low_hours = 0  # Reset for next potential event
+                            consecutive_low_hours = 0
                 people_in_last_hour = 0
                 last_hour_start_time = current_time_event_check
 
@@ -740,9 +762,7 @@ if __name__ == '__main__':
 
             for track_id_hist, points in track_history.items():
                 color = (0, 255, 0) if track_id_hist in counted_in else (0, 0,
-                                                                         255) if track_id_hist in counted_out else (200,
-                                                                                                                    200,
-                                                                                                                    200)
+                                                                         255) if track_id_hist in counted_out else (200, 200, 200)
                 for i_pt in range(1, len(points)):
                     if points[i_pt - 1] is None or points[i_pt] is None: continue
                     cv2.line(annotated_frame, points[i_pt - 1], points[i_pt], color, 1)
@@ -762,36 +782,16 @@ if __name__ == '__main__':
                             cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 0), 2)
 
             if config.RECORDING:
-                recording_frame = annotated_frame.copy()  # This is already 960p
-                # Resize to 360p for recording as per recorder setup
-                recording_frame_resized = cv2.resize(recording_frame,
-                                                     config.GET_RESOLUTION('360p', config.ASPECT_RATIO))
-
-                # Annotations for the smaller recording frame
+                recording_frame = cv2.resize(annotated_frame, config.GET_RESOLUTION('360p', config.ASPECT_RATIO))
                 rec_line_start = config.GET_POINT(resolution='360p', point='a')
                 rec_line_end = config.GET_POINT(resolution='360p', point='b')
-                cv2.line(recording_frame_resized, rec_line_start, rec_line_end, (255, 255, 255),
-                         1)  # Thinner line for smaller frame
+                cv2.line(recording_frame, rec_line_start, rec_line_end, (255, 255, 255), 1)
+                recorder.add_frame(recording_frame)
 
-                rec_text_y_offset = 15
-                font_scale_rec = 0.4
-                cv2.putText(recording_frame_resized, f"IN: {count_in}", (10, rec_text_y_offset),
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale_rec, (0, 255, 0), 1)
-                cv2.putText(recording_frame_resized, f"OUT: {count_out}", (10, rec_text_y_offset * 2),
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale_rec, (0, 0, 255), 1)
-                cv2.putText(recording_frame_resized, f"FACES: {len(face_images)}", (10, rec_text_y_offset * 3),
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale_rec, (0, 255, 255), 1)
-                cv2.putText(recording_frame_resized, f"Events: {daily_event_count}", (10, rec_text_y_offset * 4),
-                            cv2.FONT_HERSHEY_SIMPLEX, font_scale_rec, (255, 0, 255), 1)
-                if event_active:
-                    cv2.putText(recording_frame_resized, f"Event IN: {current_event_count_in}",
-                                (10, rec_text_y_offset * 5), cv2.FONT_HERSHEY_SIMPLEX, font_scale_rec, (255, 255, 0), 1)
-                recorder.add_frame(recording_frame_resized)
-
-            ws_server.add_frame(annotated_frame)  # Send 960p annotated frame via WebSocket
+            ws_server.add_frame(annotated_frame)
 
             if not config.HEADLESS:
-                display_frame = cv2.resize(annotated_frame, (1280, 720))  # Or any preferred display size
+                display_frame = cv2.resize(annotated_frame, (1280, 720))
                 cv2.imshow('Live stream at [LOCATION_NAME]', display_frame)
 
             current_time_stats = time.time()
@@ -803,14 +803,10 @@ if __name__ == '__main__':
             # Daily report logic
             now = datetime.datetime.now()
             report_time_obj = datetime.datetime.strptime(config.REPORT_TIME, "%H:%M:%S").time()
-            # Check if current time is past report time and report hasn't been generated yet for today
-            # A more robust way is to store the date of the last report
             if now.time() >= report_time_obj and (
                     now - datetime.timedelta(seconds=max(1, stats_update_interval * 2))).time() < report_time_obj:
-                # This condition ensures it runs once around report_time_obj
                 today_date_str = now.strftime('%Y-%m-%d')
                 try:
-                    # Check if report for today already exists to prevent multiple inserts if app restarts near report time
                     cursor.execute("SELECT 1 FROM daily_report WHERE date = ?", (today_date_str,))
                     if cursor.fetchone() is None:
                         cursor.execute(
@@ -820,29 +816,23 @@ if __name__ == '__main__':
                         crowd_records.commit()
                         print(f"Daily report generated for {today_date_str}")
 
-                        # Reset daily counters
                         count_in = 0
                         count_out = 0
                         daily_event_count = 0
                         detected_faces.clear()
-                        face_images.clear()  # Clears the live face_images dict, new faces will be saved for the new day
-
-                        # Reset event tracking if an event was active at report time (or consider if it should span across midnight)
+                        face_images.clear()
                         if event_active:
                             print(f"Note: An event was active during daily report generation. Resetting event state.")
-                            # Optionally, you might want to "end" the event and record it before resetting.
-                            # For simplicity here, just resetting.
                         event_active = False
                         current_event_count_in = 0
-                        consecutive_low_hours = 0  # Reset this as well
+                        consecutive_low_hours = 0
                         event_start_time = None
-                        people_in_last_hour = 0  # Reset hourly counter
-                        last_hour_start_time = time.time()  # Reset hourly timer
+                        people_in_last_hour = 0
+                        last_hour_start_time = time.time()
                     else:
                         print(f"Daily report for {today_date_str} already exists. Skipping generation.")
-                except sqlite3.Error as e:  # Catch specific sqlite errors
+                except sqlite3.Error as e:
                     print(f"SQLite error generating daily report: {e}")
-                    # Log to file as fallback
                     error_log_path = os.path.join(config.ROOT_DIR, 'daily_report_error.log')
                     with open(error_log_path, mode='a', encoding='utf-8') as error_log:
                         error_log.write(
@@ -859,4 +849,4 @@ if __name__ == '__main__':
 
         traceback.print_exc()
     finally:
-        signal_handler(None, None) 
+        signal_handler(None, None)
