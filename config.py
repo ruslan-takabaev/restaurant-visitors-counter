@@ -1,6 +1,6 @@
 import os
 
-ROOT_DIR = r"/home/mitc/count_people/"  # Path to the project root directory
+ROOT_DIR = r"/path/to/project/directory/"  # Path to the project root directory (UPDATE THIS)
 
 HEADLESS = False  # "True" to run without display window; "False" to show display window;
 RECORDING = False  # "True" to record video; "False" to run without recording.
@@ -8,7 +8,7 @@ RECORDING = False  # "True" to record video; "False" to run without recording.
 """WEBSOCKET"""
 WEBSOCKET_HOST = '0.0.0.0'  # Listen on all interfaces
 WEBSOCKET_PORT = 8765  # Port for WebSocket connections
-WEBSOCKET_STREAM_QUALITY = 60  # JPEG quality for WebSocket stream (0-100, higher is better quality, larger size)
+WEBSOCKET_STREAM_QUALITY = 60  # JPEG quality for WebSocket stream (0-100; higher is better quality, larger size, more lag)
 
 """INTERNAL MODULES"""
 # Path to directory for saving raw recordings
@@ -28,31 +28,7 @@ FPS = 25  # Default video FPS (25)
 DEFAULT_RESOLUTION = '1080p'  # Default video resolution (1920x1080)
 
 """CAMERA RTSP ADDRESS"""
-CAMERA_URL = "rtsp://ipcam.uzcloud.uz:8080/rtsp/18269399/ad4ac096b8eeaca291aa"
-
-"""==============================================================================================================="""
-"""===================DO NOT CHANGE ANYTHING BELOW THIS LINE UNLESS YOU KNOW WHAT YOU ARE DOING==================="""
-"""==============================================================================================================="""
-
-
-# Get proper recording resolution according to aspect ratio (default 16:9)
-def GET_RESOLUTION(resolution=DEFAULT_RESOLUTION, aspect_ratio=ASPECT_RATIO):
-    height = round(int(resolution.split('p')[0].split('P')[0]), 0)
-    width = round((height * aspect_ratio), 0)
-    return int(width), int(height)
-
-
-# Get a point for a counting line (A or B)
-def GET_POINT(resolution=DEFAULT_RESOLUTION, aspect_ratio=ASPECT_RATIO, point='a'):
-    a, b = GET_RESOLUTION(resolution, aspect_ratio)
-
-    if point == 'a':
-        return int(a * 0.80), int(b * 0.35)
-    elif point == 'b':
-        return int(a * 0.80), int(b * 0.85)
-
-    return 0
-
+CAMERA_URL = ""  # RTSP URL (UPDATE THIS)
 
 """TRACKING QUALITY CONSTANTS"""
 MIN_TRACK_HISTORY = 8  # Minimum number of points needed for a reliable direction
@@ -62,6 +38,21 @@ FACE_SAVING_PROB = 0.15  # Probability of saving a picture of a new detected fac
 
 """TIME CONSTANTS"""
 TIME_FORMAT = "%d-%m-%Y_%H:%M:%S"  # Time format for datetime.datetime.now().strftime()
-SQL_TIME_FORMAT = "%Y%m%d_%H%M%S"
+SQL_TIME_FORMAT = "%Y%m%d_%H%M%S"  # Time format for database
 REPORT_TIME = "03:00:00"  # Timestamp to reset counters and submit daily reports to db
-SAVE_PERIOD = 3600  # Time period between recording (saves in seconds)
+SAVE_PERIOD = 3600  # Time period between recording saves in seconds (default: 3600s = 1h)
+
+"""FUNCTION TO AUTOMATICALLY GET FRAME RESOLUTION"""
+def GET_RESOLUTION(resolution=DEFAULT_RESOLUTION, aspect_ratio=ASPECT_RATIO):
+    height = round(int(resolution.split('p')[0].split('P')[0]), 0)
+    width = round((height * aspect_ratio), 0)
+    return int(width), int(height)
+
+"""FUNCTION TO AUTOMATICALLY GET POINT COORDINATES"""
+def GET_POINT(resolution=DEFAULT_RESOLUTION, aspect_ratio=ASPECT_RATIO, point='a'):
+    a, b = GET_RESOLUTION(resolution, aspect_ratio)
+    if point == 'a':
+        return int(a * 0.80), int(b * 0.35)
+    elif point == 'b':
+        return int(a * 0.80), int(b * 0.85)
+    return 0
