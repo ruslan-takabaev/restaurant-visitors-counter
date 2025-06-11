@@ -1,13 +1,13 @@
 ## 1 - Download project files and model weights
 ```
 $ git clone https://github.com/ruslan-takabaev/restaurant-visitors-counter.git && cd restaurant-visitors-counter
-$ mkdir -p 'rec/raw' 'rec/annotated' 'faces/' 'model/'
+$ mkdir -p 'rec/raw' 'rec/annotated' 'faces/' 'models/'
 ```
-Download and move the yolo model to 'model/' subdirectory. Model available on [kaggle](https://www.kaggle.com/models/ruslantakabaev/yolov8s-people-and-faces) and [huggingface](https://huggingface.co/rta2101/yolov8s-faces-and-people/blob/main/yolov8s_custom_v1.1.pt)
+Download and move the yolo model to 'models/' subdirectory. Model available on [kaggle](https://www.kaggle.com/models/ruslantakabaev/yolov8s-people-and-faces) and [huggingface](https://huggingface.co/rta2101/yolov8s-faces-and-people/blob/main/yolov8s_custom_v1.1.pt)
 
 OR
 ```
-$ cd model/
+$ cd models/
 $ wget https://huggingface.co/rta2101/yolov8s-faces-and-people/resolve/main/yolov8s_custom_v1.1.pt
 ```
 
