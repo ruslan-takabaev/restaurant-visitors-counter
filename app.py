@@ -17,10 +17,8 @@ import websockets
 from pathlib import Path
 from queue import Queue
 import signal
-import asyncio
 
 from recorder import VideoRecorder
-from bot_manager import TelegramBotManager
 
 """WebSocket server to stream data to UI"""
 class WebSocketServer:
@@ -342,31 +340,6 @@ if __name__ == '__main__':
     # Dictionary to store face image filenames (track_id: filename)
     # This will be shared with the WebSocketServer
     face_images = {}
-
-    # Initialize Telegram Bot Manager
-    bot_manager = None
-    if config.BOT_ENABLED:
-        print("Telegram Bot is enabled. Initializing...")
-        try:
-            bot_manager = TelegramBotManager(token=config.TELEGRAM_BOT_TOKEN, chat_id=config.TELEGRAM_CHAT_ID)
-            
-            def run_bot():
-                # Each thread needs its own event loop for asyncio
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                loop.run_until_complete(bot_manager.start_polling())
-
-            threading.Thread(target=run_bot, daemon=True).start()
-            
-            # Send a startup notification. Must be run in a temporary event loop.
-            asyncio.run(bot_manager.send_notification("✅ <b>People Counter application started successfully!</b>"))
-        except Exception as e:
-            print(f"FATAL: Could not initialize Telegram Bot. Please check TOKEN/ID. Error: {e}")
-            print("Disabling bot for this session.")
-            bot_manager = None # Disable bot if initialization fails
-    else:
-        print("Telegram Bot is disabled in config.py.")
-    
     
     # Initialize WebSocket server
     ws_server = WebSocketServer(
@@ -472,8 +445,6 @@ if __name__ == '__main__':
     cap = connect_camera(config.CAMERA_URL)
     if cap is None:
         print("Could not establish camera connection. Exiting.")
-        if bot_manager:
-            asyncio.run(bot_manager.send_notification("❌ <b>FATAL: Could not connect to camera on startup.</b> Application is exiting."))
         if ws_server: ws_server.stop()
         sys.exit(1)
 
@@ -538,8 +509,6 @@ if __name__ == '__main__':
             recorder.stop()
         if ws_server is not None:
             ws_server.stop()
-        if bot_manager is not None:
-             asyncio.run(bot_manager.send_notification("ℹ️ <b>People Counter application is shutting down.</b>"))
         cv2.destroyAllWindows()
 
         timer_end = datetime.datetime.now().strftime(config.TIME_FORMAT)
@@ -585,9 +554,7 @@ if __name__ == '__main__':
             # If reading fails for any reason, enter the reconnection sub-loop
             if not ret:
                 print("Stream lost or frame could not be read. Attempting to reconnect...")
-                if bot_manager:
-                    asyncio.run(bot_manager.send_notification("❌ <b>Camera stream lost!</b>\nAttempting to reconnect..."))
-          
+                
                 # Cleanly release the old camera object if it exists
                 if cap:
                     cap.release()
@@ -600,8 +567,6 @@ if __name__ == '__main__':
                     cap = connect_camera(config.CAMERA_URL)
 
                     if cap is not None and cap.isOpened():
-                        if bot_manager:
-                            asyncio.run(bot_manager.send_notification("✅ <b>Camera reconnected successfully!</b>"))
                         print("Reconnection successful. Resuming stream processing.")
                         # Invalidate the last good frame to ensure we don't process a stale image
                         last_successful_frame = None
@@ -803,8 +768,7 @@ if __name__ == '__main__':
                 rec_line_end = config.GET_POINT(resolution='360p', point='b')
                 cv2.line(recording_frame, rec_line_start, rec_line_end, (255, 255, 255), 1)
                 recorder.add_frame(recording_frame)
-            if bot_manager:
-                bot_manager.add_frame_for_gif(annotated_frame)
+        
             ws_server.add_frame(annotated_frame)
 
             if not config.HEADLESS:
@@ -862,9 +826,7 @@ if __name__ == '__main__':
 
     except Exception as e:
         print(f"Unexpected error in main loop: {e}")
-        if bot_manager:
-            error_message = f"💥 <b>ERROR in main loop.</b>\n\n<pre>{e}</pre>\n\nCheck logs. Application will shut down."
-            asyncio.run(bot_manager.send_notification(error_message))
+        
         import traceback
         traceback.print_exc()
     finally:
