@@ -1,6 +1,6 @@
 # WebSocket API for People Counter Application
 
-**Endpoint:** `ws://<server_ip>:<port>` (Default: `ws://<server_ip>:8765`)
+**Endpoint:** `ws://<server_ip>:<port>` (`ws://185.203.239.203:8765`)
 
 ## Overview
 
