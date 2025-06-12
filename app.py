@@ -17,9 +17,10 @@ import websockets
 from pathlib import Path
 from queue import Queue
 import signal
+import asyncio
 
 from recorder import VideoRecorder
-
+from bot_manager import TelegramBotManager
 
 """WebSocket server to stream data to UI"""
 class WebSocketServer:
@@ -34,10 +35,6 @@ class WebSocketServer:
         self.is_running = False
         self.face_images_ref = face_images_ref
 
-    # =========================================================================
-    # CHANGE #1: The handler method is renamed to the special __call__ method.
-    # This makes the class instance itself a callable "protocol factory".
-    # =========================================================================
     async def __call__(self, websocket, path=None):
         # Register client
         self.connected_clients.add(websocket)
@@ -67,9 +64,6 @@ class WebSocketServer:
         finally:
             # Unregister client
             self.connected_clients.remove(websocket)
-
-    # ... (rest of your methods like send_face_image, broadcast_frame, etc. remain unchanged) ...
-    # ... (make sure all other methods from send_face_image to update_stats are still here) ...
 
     async def send_face_image(self, websocket, face_id):
         if self.face_images_ref is None:
@@ -111,7 +105,6 @@ class WebSocketServer:
                 json.dumps({"type": "all_faces", "error": "Face data temporarily unavailable, try again."}))
             return
 
-        # Sort by filename (descending, assuming filenames like "timestamp_uuid.jpg" are sortable by time)
         sorted_face_items = sorted(current_face_items, key=lambda item: item[1], reverse=True)
 
         count = 0
@@ -191,7 +184,7 @@ class WebSocketServer:
                         self.connected_clients.remove(websocket)
 
             # Small delay to prevent CPU overload
-            await asyncio.sleep(0.5)  # Update stats twice per second
+            await asyncio.sleep(1)  # Update stats once per second
 
     async def broadcast_event(self):
         """Broadcast event information to all connected clients"""
@@ -272,10 +265,6 @@ class WebSocketServer:
     async def start_server(self):
         """Start the WebSocket server"""
         self.is_running = True
-        # =========================================================================
-        # CHANGE #2: Pass the instance `self` directly to websockets.serve.
-        # It will now use the `__call__` method we defined for each connection.
-        # =========================================================================
         self.server = await websockets.serve(
             self, self.host, self.port
         )
@@ -354,6 +343,31 @@ if __name__ == '__main__':
     # This will be shared with the WebSocketServer
     face_images = {}
 
+    # Initialize Telegram Bot Manager
+    bot_manager = None
+    if config.BOT_ENABLED:
+        print("Telegram Bot is enabled. Initializing...")
+        try:
+            bot_manager = TelegramBotManager(token=config.TELEGRAM_BOT_TOKEN, chat_id=config.TELEGRAM_CHAT_ID)
+            
+            def run_bot():
+                # Each thread needs its own event loop for asyncio
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                loop.run_until_complete(bot_manager.start_polling())
+
+            threading.Thread(target=run_bot, daemon=True).start()
+            
+            # Send a startup notification. Must be run in a temporary event loop.
+            asyncio.run(bot_manager.send_notification("✅ <b>People Counter application started successfully!</b>"))
+        except Exception as e:
+            print(f"FATAL: Could not initialize Telegram Bot. Please check TOKEN/ID. Error: {e}")
+            print("Disabling bot for this session.")
+            bot_manager = None # Disable bot if initialization fails
+    else:
+        print("Telegram Bot is disabled in config.py.")
+    
+    
     # Initialize WebSocket server
     ws_server = WebSocketServer(
         host=getattr(config, 'WEBSOCKET_HOST', config.WEBSOCKET_HOST),
@@ -454,11 +468,12 @@ if __name__ == '__main__':
         print("Failed to connect to camera after maximum retries")
         return None
 
-
     # Connect to camera
     cap = connect_camera(config.CAMERA_URL)
     if cap is None:
         print("Could not establish camera connection. Exiting.")
+        if bot_manager:
+            asyncio.run(bot_manager.send_notification("❌ <b>FATAL: Could not connect to camera on startup.</b> Application is exiting."))
         if ws_server: ws_server.stop()
         sys.exit(1)
 
@@ -514,7 +529,6 @@ if __name__ == '__main__':
         segment_duration=config.SAVE_PERIOD
     )
 
-
     # Handle graceful shutdown
     def signal_handler(sig, frame_signal):  # Renamed 'frame' to 'frame_signal' to avoid conflict
         print("Shutting down gracefully...")
@@ -524,6 +538,8 @@ if __name__ == '__main__':
             recorder.stop()
         if ws_server is not None:
             ws_server.stop()
+        if bot_manager is not None:
+             asyncio.run(bot_manager.send_notification("ℹ️ <b>People Counter application is shutting down.</b>"))
         cv2.destroyAllWindows()
 
         timer_end = datetime.datetime.now().strftime(config.TIME_FORMAT)
@@ -569,7 +585,9 @@ if __name__ == '__main__':
             # If reading fails for any reason, enter the reconnection sub-loop
             if not ret:
                 print("Stream lost or frame could not be read. Attempting to reconnect...")
-
+                if bot_manager:
+                    asyncio.run(bot_manager.send_notification("❌ <b>Camera stream lost!</b>\nAttempting to reconnect..."))
+          
                 # Cleanly release the old camera object if it exists
                 if cap:
                     cap.release()
@@ -582,6 +600,8 @@ if __name__ == '__main__':
                     cap = connect_camera(config.CAMERA_URL)
 
                     if cap is not None and cap.isOpened():
+                        if bot_manager:
+                            asyncio.run(bot_manager.send_notification("✅ <b>Camera reconnected successfully!</b>"))
                         print("Reconnection successful. Resuming stream processing.")
                         # Invalidate the last good frame to ensure we don't process a stale image
                         last_successful_frame = None
@@ -590,16 +610,12 @@ if __name__ == '__main__':
                     else:
                         print(f"Reconnect attempt failed. Retrying in {reconnect_delay} seconds...")
                         time.sleep(reconnect_delay)
-
                 # After successful reconnection, use 'continue' to skip the rest of this
                 # loop iteration and start fresh with the new camera connection.
                 continue
-
             # If we reach here, 'ret' was True, so we have a valid frame
             # Store a copy of the good frame to use as a fallback if needed (though the new logic minimizes this)
             last_successful_frame = frame.copy()
-
-            # --- ALL NORMAL PROCESSING LOGIC CONTINUES BELOW ---
 
             # Resize frame for processing
             processed_frame = cv2.resize(frame, config.GET_RESOLUTION('960p', config.ASPECT_RATIO))
@@ -705,7 +721,7 @@ if __name__ == '__main__':
                             if track_id_key in track_history: del track_history[track_id_key]
                             if track_id_key in track_time: del track_time[track_id_key]
 
-            # Event logic
+            # --- Event logic ---
             current_time_event_check = time.time()
             if current_time_event_check - last_hour_start_time >= 3600:
                 print(f"Hourly check: {people_in_last_hour} people entered in the last hour.")
@@ -756,7 +772,7 @@ if __name__ == '__main__':
                 people_in_last_hour = 0
                 last_hour_start_time = current_time_event_check
 
-            # ---- Annotation and Display ----
+            # --- Annotation and display ---
             h_ann, w_ann = annotated_frame.shape[:2]
             cv2.rectangle(annotated_frame, (0, 0), (int(w_ann * 0.27), int(h_ann * 0.22)), (155, 155, 155), cv2.FILLED)
 
@@ -787,7 +803,8 @@ if __name__ == '__main__':
                 rec_line_end = config.GET_POINT(resolution='360p', point='b')
                 cv2.line(recording_frame, rec_line_start, rec_line_end, (255, 255, 255), 1)
                 recorder.add_frame(recording_frame)
-
+            if bot_manager:
+                bot_manager.add_frame_for_gif(annotated_frame)
             ws_server.add_frame(annotated_frame)
 
             if not config.HEADLESS:
@@ -800,7 +817,7 @@ if __name__ == '__main__':
                                        current_event_count_in)
                 last_stats_update = current_time_stats
 
-            # Daily report logic
+            # --- Daily report logic ---
             now = datetime.datetime.now()
             report_time_obj = datetime.datetime.strptime(config.REPORT_TIME, "%H:%M:%S").time()
             if now.time() >= report_time_obj and (
@@ -845,8 +862,10 @@ if __name__ == '__main__':
 
     except Exception as e:
         print(f"Unexpected error in main loop: {e}")
+        if bot_manager:
+            error_message = f"💥 <b>ERROR in main loop.</b>\n\n<pre>{e}</pre>\n\nCheck logs. Application will shut down."
+            asyncio.run(bot_manager.send_notification(error_message))
         import traceback
-
         traceback.print_exc()
     finally:
         signal_handler(None, None)
