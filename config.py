@@ -2,13 +2,19 @@ import os
 
 ROOT_DIR = r"/path/to/project/directory/"  # Path to the project root directory (UPDATE THIS)
 
-HEADLESS = False  # "True" to run without display window; "False" to show display window;
-RECORDING = False  # "True" to record video; "False" to run without recording.
+"""OPTIONAL FEATURES ENABLE/DISABLE FLAGS"""
+HEADLESS = False  # "True" to run without display window; "False" to show display window
+RECORDING = True  # "True" to record video; "False" to run without recording
+BOT_ENABLED = True  # "True" to enable bot activity; "False" to disable it
 
 """WEBSOCKET"""
 WEBSOCKET_HOST = '0.0.0.0'  # Listen on all interfaces
 WEBSOCKET_PORT = 8765  # Port for WebSocket connections
 WEBSOCKET_STREAM_QUALITY = 60  # JPEG quality for WebSocket stream (0-100; higher is better quality, larger size, more lag)
+
+"""TELEGRAM BOT INFO"""
+TELEGRAM_BOT_TOKEN = ""  # Telegram API token for bot
+TELEGRAM_CHAT_ID = ""  # Telegram user ID to send info messages to
 
 """INTERNAL MODULES"""
 # Path to directory for saving raw recordings
