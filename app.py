@@ -128,86 +128,80 @@ class WebSocketServer:
         """Broadcast the latest frame to all connected clients"""
         while self.is_running:
             if not self.frame_queue.empty():
-                # Get the latest frame
                 encoded_frame = self.frame_queue.get()
-
-                # Only broadcast if we have clients
-                if self.connected_clients:
+                
+                # Create a copy of the set to prevent RuntimeError during iteration
+                clients_to_broadcast = self.connected_clients.copy()
+                if clients_to_broadcast:
                     message = json.dumps({
                         "type": "frame",
                         "data": encoded_frame,
                         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                     })
-
-                    # Broadcast to all clients
-                    websockets_to_remove = set()
-                    for websocket in self.connected_clients:
+    
+                    # Iterate over the safe copy
+                    for websocket in clients_to_broadcast:
                         try:
                             await websocket.send(message)
                         except websockets.exceptions.ConnectionClosed:
-                            websockets_to_remove.add(websocket)
-
-                    # Remove closed connections
-                    for websocket in websockets_to_remove:
-                        self.connected_clients.remove(websocket)
-
-            # Small delay to prevent CPU overload
-            await asyncio.sleep(0.03)  # ~30fps max
-
+                            # If a connection is closed, remove it from the original set
+                            self.connected_clients.discard(websocket)
+    
+            await asyncio.sleep(0.03)
+    
+    
     async def broadcast_stats(self):
         """Broadcast the latest statistics to all connected clients"""
         while self.is_running:
             if not self.stats_queue.empty():
-                # Get the latest stats
                 stats = self.stats_queue.get()
-
-                # Only broadcast if we have clients
-                if self.connected_clients:
+                
+                # Create a copy of the set to prevent RuntimeError during iteration
+                clients_to_broadcast = self.connected_clients.copy()
+                if clients_to_broadcast:
                     message = json.dumps({
                         "type": "stats",
                         "data": stats,
                         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                     })
-
-                    # Broadcast to all clients
-                    websockets_to_remove = set()
-                    for websocket in self.connected_clients:
+    
+                    # Iterate over the safe copy
+                    for websocket in clients_to_broadcast:
                         try:
                             await websocket.send(message)
                         except websockets.exceptions.ConnectionClosed:
-                            websockets_to_remove.add(websocket)
-
-                    # Remove closed connections
-                    for websocket in websockets_to_remove:
-                        self.connected_clients.remove(websocket)
-
-            # Small delay to prevent CPU overload
-            await asyncio.sleep(1)  # Update stats once per second
-
+                            # If a connection is closed, remove it from the original set
+                            self.connected_clients.discard(websocket)
+    
+            await asyncio.sleep(0.5)
+    
+    
     async def broadcast_event(self):
         """Broadcast event information to all connected clients"""
         while self.is_running:
             if not self.event_queue.empty():
                 event_data = self.event_queue.get()
-
-                if self.connected_clients:
+                
+                # Create a copy of the set to prevent RuntimeError during iteration
+                clients_to_broadcast = self.connected_clients.copy()
+                if clients_to_broadcast:
                     message = json.dumps({
                         "type": "event",
                         "data": event_data,
                         "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
                     })
-
-                    websockets_to_remove = set()
-                    for websocket in self.connected_clients:
+    
+                    # Iterate over the safe copy
+                    for websocket in clients_to_broadcast:
                         try:
                             await websocket.send(message)
                         except websockets.exceptions.ConnectionClosed:
-                            websockets_to_remove.add(websocket)
+                            # If a connection is closed, remove it from the original set
+                            self.connected_clients.discard(websocket)
+    
+            await asyncio.sleep(0.1)
 
-                    for websocket in websockets_to_remove:
-                        self.connected_clients.remove(websocket)
-            await asyncio.sleep(0.1)  # Check for new events frequently
-
+    
     def add_frame(self, frame):
         """Add a frame to the queue for broadcasting"""
         try:
